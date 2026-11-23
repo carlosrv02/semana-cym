@@ -682,7 +682,7 @@ function cardHtml(c, pid){
     <div><div class="ct">${esc(c.title)}</div>
     <div class="meta">
       ${tag?`<span class="tagchip" style="background:${tag.color};color:${textOn(tag.color)}">${esc(tag.name)}</span>`:''}
-      ${c.hours?`<span class="due">⏱ ${hrs(c.hours)}</span>`:(done?'':'<span class="due late" title="Ponle horas estimadas">⏱ sin horas</span>')}
+      ${c.hours?`<span class="due">⏱ ${hrs(c.hours)}</span>`:''}
       ${tot?`<span class="prog"><i style="width:${dn/tot*100}%"></i></span>${dn}/${tot}`:''}
       ${c.due?`<span class="due ${late?'late':''}">📅 ${fmtDate(parseIso(c.due))}</span>`:''}
       ${c.notes?'<span title="Tiene notas">📝</span>':''}</div></div></div>`;
@@ -707,7 +707,7 @@ function taskSummaryHtml(pid){
       return `<div class="srow trow"><span class="nm"><span class="pdot" style="--pc:${c.color}"></span>${esc(c.name)}</span>
         <span class="h">${hrs(v)}</span><span class="h">${pctW(v)}</span><span class="rs">${st}</span></div>`; }).join('')
       : '<div class="hint">Ninguna tarea abierta tiene horas todavía.</div>'}
-    <div class="hint" style="margin-top:8px">Cuentan las tareas de todas las columnas menos Hechas y Archivadas. Se compara con el horario de la semana del ${fmtDate(mon)}.${noH?` <b style="color:var(--danger)">${noH} tarea${noH>1?'s':''} sin horas.</b>`:''}</div>
+    <div class="hint" style="margin-top:8px">Cuentan las tareas de todas las columnas menos Hechas y Archivadas. Se compara con el horario de la semana del ${fmtDate(mon)}.${noH?` ${noH} tarea${noH>1?'s':''} sin horas (no cuentan).`:''}</div>
   </div>`;
 }
 const findCard = (pid, id) => P(pid).cards.find(c => c.id===id);
@@ -732,10 +732,10 @@ function openCardModal(pid, id, status){
   };
   openModal(`<h2>${orig?'Editar tarea':'Nueva tarea'}</h2><div class="sub">${esc(P(pid).name)}</div>
     <div class="fld"><label>Título</label><input type="text" id="kTitle" style="width:100%" value="${esc(c.title)}" placeholder="¿Qué quieres conseguir?" autofocus></div>
-    <div class="fld"><label>Etiqueta (¿a qué tipo de tiempo pertenece?)</label><div class="chips" id="kTags"></div>
+    <div class="fld"><label>Etiqueta <span style="font-weight:400">(opcional · toca otra vez para quitarla)</span></label><div class="chips" id="kTags"></div>
       <div class="row hidden" id="kNewTag"><input type="color" id="kNtColor" value="#9b8bd8"><input type="text" id="kNtName" placeholder="Ej.: Estudio, Gym, Inglés…"><button class="btn sm" data-m="mktag">Crear</button></div></div>
     <div class="row" style="gap:12px;align-items:flex-start">
-      <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Horas estimadas (a la semana)</label>
+      <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Horas estimadas <span style="font-weight:400">(opcional)</span></label>
         <div class="row" style="margin:0"><input type="text" id="kHours" inputmode="decimal" style="width:90px;flex:0 0 auto" value="${c.hours?String(c.hours).replace('.',','):''}" placeholder="Ej.: 3"><span class="hint" id="kPct"></span></div></div>
       <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Columna</label><select id="kStatus" style="width:100%">${sts.map(s=>`<option value="${s.id}" ${c.status===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Fecha límite</label><input type="date" id="kDue" style="width:100%" value="${c.due}"></div>
@@ -756,7 +756,7 @@ function openCardModal(pid, id, status){
       $('#kTitle', s).addEventListener('keydown', e => { if (e.key==='Enter'){ e.preventDefault(); modalCtx.actions.ok(); } });
     },
     actions:{
-      tag(el){ c.tag = el.dataset.id; drawTags($('.sheet')); },
+      tag(el){ c.tag = c.tag===el.dataset.id ? '' : el.dataset.id; drawTags($('.sheet')); },   // tocar otra vez = quitar etiqueta
       newtag(){ $('#kNewTag').classList.toggle('hidden'); $('#kNtName').focus(); },
       mktag(){ const n = $('#kNtName').value.trim(); if (!n){ toast('Ponle un nombre a la etiqueta'); return; }
         const t = {id:uid(), name:n, color:$('#kNtColor').value}; P(pid).categories.push(t); save(pid);
@@ -768,13 +768,13 @@ function openCardModal(pid, id, status){
         P(pid).cards = P(pid).cards.filter(x => x.id!==orig.id); save(pid); renderBoard(); } },
       ok(){
         const t = $('#kTitle').value.trim(); if (!t){ toast('Ponle un título'); return; }
-        if (!c.tag || !catOf(pid, c.tag)){ toast('Elige una etiqueta (Estudio, Gym…)'); return; }
-        const hv = parseFloat(($('#kHours').value||'').replace(',','.'));
-        if (!(hv > 0)){ toast('Pon cuántas horas crees que le dedicarás'); $('#kHours').focus(); return; }
+        if (c.tag && !catOf(pid, c.tag)) c.tag = '';
+        const hRaw = ($('#kHours').value||'').trim(), hv = parseFloat(hRaw.replace(',','.'));
+        if (hRaw && !(hv > 0)){ toast('Las horas tienen que ser un número, por ejemplo 3 o 1,5 (o déjalo vacío)'); $('#kHours').focus(); return; }
         const pending = $('#clNew').value.trim(); if (pending) c.checklist.push({id:uid(), text:pending, done:false});
         const ns = $('#kStatus').value;
         if (ns!==c.status && ns==='hecha') c.prev = c.status;
-        Object.assign(c, {title:t, status:ns, hours:Math.round(hv*2)/2 || 0.5, due:$('#kDue').value, notes:$('#kNotes').value, updated:Date.now()});
+        Object.assign(c, {title:t, status:ns, hours: hv > 0 ? (Math.round(hv*2)/2 || 0.5) : null, due:$('#kDue').value, notes:$('#kNotes').value, updated:Date.now()});
         c.checklist = c.checklist.filter(i => i.text.trim());
         if (orig) Object.assign(orig, c); else P(pid).cards.push(c);
         save(pid); closeModal(); renderBoard();
