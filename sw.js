@@ -1,7 +1,7 @@
 // Service worker: permite abrir la app sin conexión.
 // Si cambias index.html, sube el número de versión para forzar la actualización.
-const CACHE = 'nuestra-semana-v2';
-const ASSETS = ['./', './index.html', './firebase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+const CACHE = 'nuestra-semana-v3';
+const ASSETS = ['./', './index.html', './firebase-config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 const FIREBASE_CDN = 'https://www.gstatic.com/firebasejs/';
 
 self.addEventListener('install', e => {
