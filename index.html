@@ -114,7 +114,15 @@ main{padding:14px 16px 40px;max-width:1500px;margin:0 auto}
 .bhead .cnt{color:var(--muted);font-weight:500;background:var(--panel2);border-radius:99px;padding:0 8px;font-size:12px}
 .bhead .ib{margin-left:auto}
 .sdot{width:10px;height:10px;border-radius:50%}
-.st-nueva{background:#8b93a7}.st-pendiente{background:#e9a23b}.st-curso{background:#4ea8de}.st-bloqueada{background:#e5484d}.st-hecha{background:#2f9e6f}.st-archivada{background:#b4b8c5}
+.addcol{flex:0 0 200px;border:2px dashed var(--line);background:transparent;border-radius:14px;padding:14px;color:var(--muted);font-weight:600;align-self:stretch;min-height:90px}
+.addcol:hover{border-color:var(--accent);color:var(--accent)}
+.tagchip{padding:1px 8px;border-radius:99px;font-weight:600;font-size:11.5px}
+.wbar{display:flex;height:12px;border-radius:99px;background:var(--line2);overflow:hidden;margin:2px 0 10px}
+.wbar span{height:100%}
+.srow.trow{grid-template-columns:130px 52px 46px 1fr}
+.trow .rs{font-size:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .ok{color:var(--ok)} .trow .ko{color:var(--danger)}
+input[type=number]{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
 .cards{display:flex;flex-direction:column;gap:8px;min-height:46px;border-radius:10px}
 .bcol.over .cards{background:color-mix(in srgb,var(--accent) 8%,transparent)}
 .card{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:9px 10px;display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:start;
@@ -208,12 +216,14 @@ const LS_DEV  = 'nuestra-semana:device';
 const DAYS   = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 const DAYS_S = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const MONTHS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-const STATUSES = [
-  {id:'nueva',name:'Nuevas'},{id:'pendiente',name:'Pendientes'},{id:'curso',name:'En curso'},
-  {id:'bloqueada',name:'Bloqueadas'},{id:'hecha',name:'Hechas'}
+// Columnas por defecto del tablero (cada persona puede añadir, renombrar, mover y borrar; "hecha" siempre existe)
+const DEFAULT_COLS = [
+  {id:'nueva',name:'Nuevas',color:'#8b93a7'},{id:'pendiente',name:'Pendientes',color:'#e9a23b'},
+  {id:'curso',name:'En curso',color:'#4ea8de'},{id:'bloqueada',name:'Bloqueadas',color:'#e5484d'},
+  {id:'hecha',name:'Hechas',color:'#2f9e6f'}
 ];
-const ARCH = {id:'archivada',name:'Archivadas'};
-const STCOL = {nueva:'#8b93a7',pendiente:'#e9a23b',curso:'#4ea8de',bloqueada:'#e5484d',hecha:'#2f9e6f',archivada:'#b4b8c5'};
+const ARCH = {id:'archivada',name:'Archivadas',color:'#b4b8c5'};
+const WEEK_H = 168;   // horas que tiene una semana
 let PIDS = ['a','b'];
 /* ---------- modo nube (Firebase) ---------- */
 const FB_CFG = window.FIREBASE_CONFIG;
@@ -239,11 +249,12 @@ const mondayOf = d => { const x = new Date(d.getFullYear(), d.getMonth(), d.getD
 const fmtMin = m => `${pad(Math.floor(m/60)%24)}:${pad(m%60)}`;
 const fmtDate = d => `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 const hrs = n => (Math.round(n*10)/10).toString().replace('.',',') + ' h';
+const pctW = h => (Math.round(h/168*1000)/10).toString().replace('.',',') + '%';   // % de las 168 h de la semana
 
 /* ---------- estado ---------- */
 function emptyProfile(id, name, color){
   return {id, name, color, categories: DEFAULT_CATS.map(([n,c]) => ({id:uid(), name:n, color:c})),
-          weeks:{}, cards:[], updatedAt: Date.now()};
+          weeks:{}, columns: clone(DEFAULT_COLS), cards:[], updatedAt: Date.now()};
 }
 function normalizeProfile(p, id){
   p = p || {};
@@ -251,14 +262,27 @@ function normalizeProfile(p, id){
     id, name: p.name || (id==='a'?'Persona 1':'Persona 2'), color: p.color || (id==='a'?'#e07a5f':'#4ea8de'),
     categories: Array.isArray(p.categories) ? p.categories.filter(c=>c && c.id).map(c=>({id:String(c.id), name:String(c.name||'Sin nombre'), color:c.color||'#9aa0b4'})) : [],
     weeks: (p.weeks && typeof p.weeks==='object') ? p.weeks : {},
+    columns: normalizeCols(p.columns),
     cards: Array.isArray(p.cards) ? p.cards.filter(c=>c && c.id).map(c=>({
-      id:String(c.id), title:String(c.title||''), notes:String(c.notes||''), status:c.status||'nueva', prev:c.prev,
+      id:String(c.id), title:String(c.title||''), notes:String(c.notes||''), status:c.status||'nueva', prev:c.prev||null,
       due:c.due||'', created:c.created||Date.now(), updated:c.updated||Date.now(),
+      hours: (typeof c.hours==='number' && c.hours>0) ? c.hours : null, tag: c.tag ? String(c.tag) : '',
       checklist: Array.isArray(c.checklist) ? c.checklist.map(i=>({id:i.id||uid(), text:String(i.text||''), done:!!i.done})) : []
     })) : [],
     updatedAt: p.updatedAt || Date.now()
   };
 }
+function normalizeCols(cols){
+  let out = Array.isArray(cols) ? cols.filter(c => c && c.id && c.id!=='archivada').map(c => ({id:String(c.id), name:String(c.name||'Columna'), color:c.color||'#8b93a7'})) : [];
+  if (!out.length) out = clone(DEFAULT_COLS);
+  if (!out.some(c => c.id==='hecha')) out.push(clone(DEFAULT_COLS[4]));
+  return out;
+}
+const colsOf  = pid => P(pid).columns;
+const allCols = pid => [...colsOf(pid), ARCH];
+const colOf   = (pid, st) => allCols(pid).find(c => c.id===st);
+// estado efectivo de una tarea: si su columna ya no existe, va a la primera
+const stOf = (pid, c) => colOf(pid, c.status) ? c.status : colsOf(pid)[0].id;
 function loadData(){
   try{
     const s = JSON.parse(localStorage.getItem(LS_DATA));
@@ -617,60 +641,104 @@ function openCatModal(pid, cat){
    ===================================================================== */
 function renderBoard(){
   const v = $('#view-objetivos'); const both = D.view==='both';
-  const sts = D.showArchived ? [...STATUSES, ARCH] : STATUSES;
   const scrolls = $$('.board', v).map(b => b.scrollLeft);
-  let h = `<div class="bar"><div class="hint grow">Arrastra las tarjetas entre columnas (en la tablet: mantén pulsado y arrastra). Toca una tarjeta para editarla. El círculo la marca como hecha.</div>
+  let h = `<div class="bar"><div class="hint grow">Arrastra las tarjetas entre columnas (en la tablet: mantén pulsado y arrastra). Toca una tarjeta para editarla, o el nombre de una columna para cambiarla. El círculo marca la tarea como hecha.</div>
     <label class="btn sm"><input type="checkbox" data-chg="showarch" ${D.showArchived?'checked':''}> Ver archivadas</label></div>`;
+  h += `<div class="summary" style="margin:0 0 14px">${visible().map(taskSummaryHtml).join('')}</div>`;
   visible().forEach(pid => {
     const cards = P(pid).cards, ed = canEdit(pid);
+    const sts = D.showArchived ? allCols(pid) : colsOf(pid);
+    const first = colsOf(pid)[0].id;
     h += `<div class="board-sec">${both||!ed?`<h2><span class="pdot" style="--pc:${P(pid).color}"></span>${esc(P(pid).name)}${ed?'':' <span class="hint" style="font-weight:400">· solo lectura</span>'}</h2>`:''}<div class="board">`;
     sts.forEach(s => {
-      const list = cards.filter(c => c.status===s.id);
+      const list = cards.filter(c => stOf(pid, c)===s.id);
+      const hsum = list.reduce((t,c) => t + (c.hours||0), 0);
+      const editable = ed && s.id!=='archivada';
       h += `<div class="bcol" data-st="${s.id}" data-p="${pid}">
-        <div class="bhead"><span class="sdot st-${s.id}"></span>${s.name}<span class="cnt">${list.length}</span>
-          ${ed&&s.id!=='archivada'?`<button class="ib sm" data-act="addcard" data-st="${s.id}" data-p="${pid}" title="Añadir">＋</button>`:''}</div>
-        <div class="cards">${list.map(cardHtml).join('')}</div>
-        ${ed&&s.id==='nueva'?`<button class="addline" data-act="addcard" data-st="nueva" data-p="${pid}">＋ Añadir tarea</button>`:''}
+        <div class="bhead"><span class="sdot" style="background:${s.color}"></span>
+          <span ${editable?`data-act="editcol" data-st="${s.id}" data-p="${pid}" style="cursor:pointer" title="Cambiar columna"`:''}>${esc(s.name)}</span>
+          <span class="cnt">${list.length}${hsum?` · ${hrs(hsum)}`:''}</span>
+          ${editable?`<button class="ib sm" data-act="addcard" data-st="${s.id}" data-p="${pid}" title="Añadir">＋</button>`:''}</div>
+        <div class="cards">${list.map(c => cardHtml(c, pid)).join('')}</div>
+        ${ed&&s.id===first?`<button class="addline" data-act="addcard" data-st="${first}" data-p="${pid}">＋ Añadir tarea</button>`:''}
         ${ed&&s.id==='hecha'&&list.length?`<button class="addline" data-act="archive" data-p="${pid}">🗄 Archivar las hechas</button>`:''}
       </div>`;
     });
+    if (ed) h += `<button class="addcol" data-act="addcol" data-p="${pid}">＋ Nueva columna</button>`;
     h += `</div></div>`;
   });
   v.innerHTML = h;
   $$('.board', v).forEach((b,i) => { if (scrolls[i]) b.scrollLeft = scrolls[i]; });
 }
-function cardHtml(c){
+const isOpen = (pid, c) => { const s = stOf(pid, c); return s!=='hecha' && s!=='archivada'; };
+function cardHtml(c, pid){
   const tot = c.checklist.length, dn = c.checklist.filter(i=>i.done).length;
-  const late = c.due && c.status!=='hecha' && c.status!=='archivada' && c.due < iso(new Date());
-  const done = c.status==='hecha' || c.status==='archivada';
-  return `<div class="card ${done?'done':''}" data-id="${c.id}" style="--sc:${STCOL[c.status]||'transparent'}">
+  const st = stOf(pid, c), done = !isOpen(pid, c);
+  const late = c.due && !done && c.due < iso(new Date());
+  const tag = c.tag && catOf(pid, c.tag);
+  const col = colOf(pid, st);
+  return `<div class="card ${done?'done':''}" data-id="${c.id}" style="--sc:${col?col.color:'transparent'}">
     <button class="chk ${done?'on':''}" data-act="togglecard" title="${done?'Desmarcar':'Marcar como hecha'}">✓</button>
     <div><div class="ct">${esc(c.title)}</div>
-    ${(tot||c.due||c.notes)?`<div class="meta">
+    <div class="meta">
+      ${tag?`<span class="tagchip" style="background:${tag.color};color:${textOn(tag.color)}">${esc(tag.name)}</span>`:''}
+      ${c.hours?`<span class="due">⏱ ${hrs(c.hours)}</span>`:(done?'':'<span class="due late" title="Ponle horas estimadas">⏱ sin horas</span>')}
       ${tot?`<span class="prog"><i style="width:${dn/tot*100}%"></i></span>${dn}/${tot}`:''}
       ${c.due?`<span class="due ${late?'late':''}">📅 ${fmtDate(parseIso(c.due))}</span>`:''}
-      ${c.notes?'<span title="Tiene notas">📝</span>':''}</div>`:''}</div></div>`;
+      ${c.notes?'<span title="Tiene notas">📝</span>':''}</div></div></div>`;
+}
+/* Resumen: horas estimadas de las tareas abiertas (todas las columnas menos Hechas/Archivadas), por etiqueta */
+function taskSummaryHtml(pid){
+  const open = P(pid).cards.filter(c => isOpen(pid, c));
+  const byTag = {}; let total = 0, noH = 0;
+  open.forEach(c => { if (!c.hours){ noH++; return; } const k = c.tag || ''; byTag[k] = (byTag[k]||0) + c.hours; total += c.hours; });
+  // horas reservadas en el horario de esta semana para cada actividad
+  const res = {}; const w = getWeek(pid, curWeek);
+  if (w) w.forEach(d => Object.values(d||{}).forEach(cid => res[cid] = (res[cid]||0) + 0.5));
+  const rows = Object.entries(byTag).sort((a,b) => b[1]-a[1]);
+  const mon = parseIso(curWeek);
+  const bar = rows.map(([k,v]) => { const c = catOf(pid,k) || {color:'#b4b8c5'}; return `<span style="display:block;width:${v/WEEK_H*100}%;background:${c.color}" title="${esc((catOf(pid,k)||{name:'Sin etiqueta'}).name)}: ${hrs(v)}"></span>`; }).join('');
+  return `<div class="panel"><h3><span class="pdot" style="--pc:${P(pid).color}"></span>Tiempo que piden las tareas de ${esc(P(pid).name)}
+      <span class="hint" style="margin-left:auto;font-weight:400">${hrs(total)} · <b>${pctW(total)}</b> de la semana</span></h3>
+    <div class="wbar" title="Proporción de las 168 h de la semana">${bar}</div>
+    ${rows.length ? rows.map(([k,v]) => {
+      const c = catOf(pid,k) || {name:'Sin etiqueta', color:'#b4b8c5'}; const r = k ? (res[k]||0) : null;
+      const st = r===null ? '' : (r >= v ? `<span class="ok">✓ ${hrs(r)} en el horario</span>` : `<span class="ko">⚠ ${hrs(r)} en el horario · faltan ${hrs(v-r)}</span>`);
+      return `<div class="srow trow"><span class="nm"><span class="pdot" style="--pc:${c.color}"></span>${esc(c.name)}</span>
+        <span class="h">${hrs(v)}</span><span class="h">${pctW(v)}</span><span class="rs">${st}</span></div>`; }).join('')
+      : '<div class="hint">Ninguna tarea abierta tiene horas todavía.</div>'}
+    <div class="hint" style="margin-top:8px">Cuentan las tareas de todas las columnas menos Hechas y Archivadas. Se compara con el horario de la semana del ${fmtDate(mon)}.${noH?` <b style="color:var(--danger)">${noH} tarea${noH>1?'s':''} sin horas.</b>`:''}</div>
+  </div>`;
 }
 const findCard = (pid, id) => P(pid).cards.find(c => c.id===id);
 function toggleCard(pid, id){
   const c = findCard(pid, id); if (!c) return;
-  if (c.status==='hecha' || c.status==='archivada'){ c.status = (c.prev && c.prev!=='hecha') ? c.prev : 'pendiente'; }
-  else { c.prev = c.status; c.status = 'hecha'; c.checklist.forEach(i => i.done = true); }
+  if (!isOpen(pid, c)){ c.status = (c.prev && c.prev!=='hecha' && colOf(pid, c.prev)) ? c.prev : colsOf(pid)[0].id; }
+  else { c.prev = stOf(pid, c); c.status = 'hecha'; c.checklist.forEach(i => i.done = true); }
   c.updated = Date.now(); save(pid); renderBoard();
 }
 function openCardModal(pid, id, status){
   const orig = id ? findCard(pid, id) : null;
-  const c = orig ? clone(orig) : {id:uid(), title:'', notes:'', status:status||'nueva', due:'', checklist:[], created:Date.now()};
-  const sts = [...STATUSES, ARCH];
+  const c = orig ? clone(orig) : {id:uid(), title:'', notes:'', status:status||colsOf(pid)[0].id, due:'', hours:null, tag:'', checklist:[], created:Date.now()};
+  c.status = stOf(pid, c);
+  const sts = allCols(pid);
   const drawCl = sheet => {
     $('#clList', sheet).innerHTML = c.checklist.map(i => `<div class="cl"><input type="checkbox" data-cl="${i.id}" ${i.done?'checked':''}>
       <input type="text" value="${esc(i.text)}" data-cltext="${i.id}"><button class="ib sm" data-m="cldel" data-id="${i.id}" title="Quitar">×</button></div>`).join('');
   };
+  const drawTags = sheet => {
+    $('#kTags', sheet).innerHTML = P(pid).categories.map(t => `<button class="tool ${c.tag===t.id?'on':''}" data-m="tag" data-id="${t.id}" style="--c:${t.color}"><span class="sw"></span>${esc(t.name)}</button>`).join('')
+      + `<button class="tool" data-m="newtag">＋ Nueva</button>`;
+  };
   openModal(`<h2>${orig?'Editar tarea':'Nueva tarea'}</h2><div class="sub">${esc(P(pid).name)}</div>
     <div class="fld"><label>Título</label><input type="text" id="kTitle" style="width:100%" value="${esc(c.title)}" placeholder="¿Qué quieres conseguir?" autofocus></div>
-    <div class="row" style="gap:12px">
-      <div class="fld" style="margin:0;flex:1"><label>Estado</label><select id="kStatus" style="width:100%">${sts.map(s=>`<option value="${s.id}" ${c.status===s.id?'selected':''}>${s.name}</option>`).join('')}</select></div>
-      <div class="fld" style="margin:0;flex:1"><label>Fecha límite</label><input type="date" id="kDue" style="width:100%" value="${c.due}"></div>
+    <div class="fld"><label>Etiqueta (¿a qué tipo de tiempo pertenece?)</label><div class="chips" id="kTags"></div>
+      <div class="row hidden" id="kNewTag"><input type="color" id="kNtColor" value="#9b8bd8"><input type="text" id="kNtName" placeholder="Ej.: Estudio, Gym, Inglés…"><button class="btn sm" data-m="mktag">Crear</button></div></div>
+    <div class="row" style="gap:12px;align-items:flex-start">
+      <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Horas estimadas (a la semana)</label>
+        <div class="row" style="margin:0"><input type="text" id="kHours" inputmode="decimal" style="width:90px;flex:0 0 auto" value="${c.hours?String(c.hours).replace('.',','):''}" placeholder="Ej.: 3"><span class="hint" id="kPct"></span></div></div>
+      <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Columna</label><select id="kStatus" style="width:100%">${sts.map(s=>`<option value="${s.id}" ${c.status===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>
+      <div class="fld" style="margin:0;flex:1;min-width:130px"><label>Fecha límite</label><input type="date" id="kDue" style="width:100%" value="${c.due}"></div>
     </div>
     <div class="fld"><label>Pasos</label><div id="clList"></div>
       <div class="row"><input type="text" id="clNew" placeholder="Añadir un paso y pulsar Enter"><button class="btn sm" data-m="cladd">Añadir</button></div></div>
@@ -678,13 +746,21 @@ function openCardModal(pid, id, status){
     <div class="foot">${orig?'<button class="btn danger left" data-m="del">Eliminar</button>':''}
       <button class="btn" data-m="cancel">Cancelar</button><button class="btn pri" data-m="ok">Guardar</button></div>`, {
     mount(s){
-      drawCl(s);
+      drawCl(s); drawTags(s);
+      const pct = () => { const v = parseFloat(($('#kHours', s).value||'').replace(',','.')); $('#kPct', s).textContent = v>0 ? `= ${pctW(v)} de la semana` : ''; };
+      $('#kHours', s).addEventListener('input', pct); pct();
+      $('#kNtName', s).addEventListener('keydown', e => { if (e.key==='Enter'){ e.preventDefault(); modalCtx.actions.mktag(); } });
       s.addEventListener('change', e => { const id = e.target.dataset.cl; if (id){ c.checklist.find(i=>i.id===id).done = e.target.checked; } });
       s.addEventListener('input', e => { const id = e.target.dataset.cltext; if (id){ c.checklist.find(i=>i.id===id).text = e.target.value; } });
       $('#clNew', s).addEventListener('keydown', e => { if (e.key==='Enter'){ e.preventDefault(); modalCtx.actions.cladd(); } });
       $('#kTitle', s).addEventListener('keydown', e => { if (e.key==='Enter'){ e.preventDefault(); modalCtx.actions.ok(); } });
     },
     actions:{
+      tag(el){ c.tag = el.dataset.id; drawTags($('.sheet')); },
+      newtag(){ $('#kNewTag').classList.toggle('hidden'); $('#kNtName').focus(); },
+      mktag(){ const n = $('#kNtName').value.trim(); if (!n){ toast('Ponle un nombre a la etiqueta'); return; }
+        const t = {id:uid(), name:n, color:$('#kNtColor').value}; P(pid).categories.push(t); save(pid);
+        c.tag = t.id; $('#kNtName').value=''; $('#kNewTag').classList.add('hidden'); drawTags($('.sheet')); toast('Etiqueta creada (también sirve para el horario)'); },
       cladd(){ const t = $('#clNew').value.trim(); if (!t) return; c.checklist.push({id:uid(), text:t, done:false}); $('#clNew').value=''; drawCl($('.sheet')); $('#clNew').focus(); },
       cldel(el){ c.checklist = c.checklist.filter(i => i.id!==el.dataset.id); drawCl($('.sheet')); },
       cancel(){ closeModal(); },
@@ -692,10 +768,13 @@ function openCardModal(pid, id, status){
         P(pid).cards = P(pid).cards.filter(x => x.id!==orig.id); save(pid); renderBoard(); } },
       ok(){
         const t = $('#kTitle').value.trim(); if (!t){ toast('Ponle un título'); return; }
+        if (!c.tag || !catOf(pid, c.tag)){ toast('Elige una etiqueta (Estudio, Gym…)'); return; }
+        const hv = parseFloat(($('#kHours').value||'').replace(',','.'));
+        if (!(hv > 0)){ toast('Pon cuántas horas crees que le dedicarás'); $('#kHours').focus(); return; }
         const pending = $('#clNew').value.trim(); if (pending) c.checklist.push({id:uid(), text:pending, done:false});
         const ns = $('#kStatus').value;
         if (ns!==c.status && ns==='hecha') c.prev = c.status;
-        Object.assign(c, {title:t, status:ns, due:$('#kDue').value, notes:$('#kNotes').value, updated:Date.now()});
+        Object.assign(c, {title:t, status:ns, hours:Math.round(hv*2)/2 || 0.5, due:$('#kDue').value, notes:$('#kNotes').value, updated:Date.now()});
         c.checklist = c.checklist.filter(i => i.text.trim());
         if (orig) Object.assign(orig, c); else P(pid).cards.push(c);
         save(pid); closeModal(); renderBoard();
@@ -704,10 +783,48 @@ function openCardModal(pid, id, status){
   });
 }
 
+/* --- columnas del tablero: crear / renombrar / mover / borrar --- */
+function openColModal(pid, stId){
+  const cols = colsOf(pid), isNew = !stId;
+  const col = isNew ? {id:uid(), name:'', color:['#9b8bd8','#5fb49c','#f28cb1','#6c7bd9','#e07a5f'][cols.length%5]} : cols.find(c => c.id===stId);
+  if (!col) return;
+  const idx = cols.indexOf(col), n = P(pid).cards.filter(c => stOf(pid, c)===col.id).length;
+  openModal(`<h2>${isNew?'Nueva columna':'Editar columna'}</h2><div class="sub">${esc(P(pid).name)}${!isNew&&n?` · ${n} tarea${n>1?'s':''}`:''}</div>
+    <div class="row"><input type="color" id="colColor" value="${col.color}"><input type="text" id="colName" value="${esc(col.name)}" placeholder="Ej.: Esta semana, Ideas, Esperando…" autofocus></div>
+    ${!isNew?`<div class="fld"><label>Posición</label><div class="row" style="margin:0">
+      <button class="btn sm" data-m="left" ${idx===0?'disabled':''}>◀ Mover a la izquierda</button>
+      <button class="btn sm" data-m="right" ${idx===cols.length-1?'disabled':''}>Mover a la derecha ▶</button></div></div>`:''}
+    ${col.id==='hecha'?'<p class="hint">Esta es la columna de tareas terminadas (la del círculo ✓): se puede renombrar pero no borrar.</p>':''}
+    <div class="foot">${!isNew&&col.id!=='hecha'?'<button class="btn danger left" data-m="del">Borrar</button>':''}
+      <button class="btn" data-m="cancel">Cancelar</button><button class="btn pri" data-m="ok">Guardar</button></div>`, {
+    mount(s){ $('#colName', s).addEventListener('keydown', e => { if (e.key==='Enter') modalCtx.actions.ok(); }); },
+    actions:{
+      cancel(){ closeModal(); },
+      left(){ cols.splice(idx,1); cols.splice(idx-1,0,col); save(pid); closeModal(); renderBoard(); },
+      right(){ cols.splice(idx,1); cols.splice(idx+1,0,col); save(pid); closeModal(); renderBoard(); },
+      async del(){
+        const rest = cols.filter(c => c.id!==col.id && c.id!=='hecha');
+        if (!rest.length){ toast('Tiene que quedar al menos una columna además de Hechas'); return; }
+        closeModal();
+        if (n && !await confirmBox('Borrar columna', `«${esc(col.name)}» tiene ${n} tarea${n>1?'s':''}. Se moverán a «${esc(rest[0].name)}».`, 'Borrar', true)) return;
+        P(pid).cards.forEach(c => { if (c.status===col.id) c.status = rest[0].id; if (c.prev===col.id) c.prev = null; });
+        P(pid).columns = cols.filter(c => c.id!==col.id); save(pid); renderBoard();
+      },
+      ok(){
+        const name = $('#colName').value.trim(); if (!name){ toast('Ponle un nombre'); return; }
+        col.name = name; col.color = $('#colColor').value;
+        if (isNew){ const hi = cols.findIndex(c => c.id==='hecha'); cols.splice(hi<0?cols.length:hi, 0, col); }
+        save(pid); closeModal(); renderBoard();
+      }
+    }
+  });
+}
+
 function openCardView(pid, id){
   const c = findCard(pid, id); if (!c) return;
-  const st = [...STATUSES, ARCH].find(s => s.id===c.status);
-  openModal(`<h2>${esc(c.title)}</h2><div class="sub">${esc(P(pid).name)} · <span class="sdot st-${c.status}" style="display:inline-block"></span> ${st?st.name:''}${c.due?` · 📅 ${fmtDate(parseIso(c.due))}`:''}</div>
+  const st = colOf(pid, stOf(pid, c)); const tag = c.tag && catOf(pid, c.tag);
+  openModal(`<h2>${esc(c.title)}</h2><div class="sub">${esc(P(pid).name)} · <span class="sdot" style="display:inline-block;background:${st.color}"></span> ${esc(st.name)}${c.due?` · 📅 ${fmtDate(parseIso(c.due))}`:''}</div>
+    ${tag||c.hours?`<div class="meta" style="display:flex;gap:6px;align-items:center">${tag?`<span class="tagchip" style="background:${tag.color};color:${textOn(tag.color)}">${esc(tag.name)}</span>`:''}${c.hours?`<span class="due">⏱ ${hrs(c.hours)} · ${pctW(c.hours)} de la semana</span>`:''}</div>`:''}
     ${c.checklist.length?`<div class="fld"><label>Pasos</label>${c.checklist.map(i=>`<div>${i.done?'✅':'⬜'} ${esc(i.text)}</div>`).join('')}</div>`:''}
     ${c.notes?`<div class="fld"><label>Notas</label><div style="white-space:pre-wrap">${esc(c.notes)}</div></div>`:''}
     <div class="foot"><button class="btn pri" data-m="ok">Cerrar</button></div>`, {actions:{ok(){ closeModal(); }}});
@@ -939,6 +1056,8 @@ document.addEventListener('click', e => {
       case 'addcat': openCatModal(ds.p || (D.view==='both' ? D.owner : D.view)); return;
       case 'dayhdr': if (canEdit(ds.p)) openDayModal(ds.p, +ds.day); return;
       case 'addcard': openCardModal(ds.p, null, ds.st); return;
+      case 'addcol': if (canEdit(ds.p)) openColModal(ds.p); return;
+      case 'editcol': if (canEdit(ds.p)) openColModal(ds.p, ds.st); return;
       case 'togglecard': { const c = a.closest('.card'), pid = c.closest('.bcol').dataset.p;
         if (!canEdit(pid)) { toast(`Las tareas de ${P(pid).name} solo se pueden ver`); return; }
         toggleCard(pid, c.dataset.id); return; }
@@ -1068,7 +1187,7 @@ async function enterCloud(user){
     if (!snap.exists()){
       const nm = sessionStorage.getItem('ns-newname') || cloudEmail.split('@')[0];
       const p = emptyProfile(ME, nm, ['#e07a5f','#4ea8de','#5fb49c','#9b8bd8'][Math.floor(Math.random()*4)]);
-      await setDoc(ref, {name:p.name, color:p.color, categories:p.categories, cards:[], updatedAt:Date.now()});
+      await setDoc(ref, {name:p.name, color:p.color, categories:p.categories, columns:p.columns, cards:[], updatedAt:Date.now()});
     }
     sessionStorage.removeItem('ns-newname');
   }catch(e){
@@ -1103,7 +1222,7 @@ async function enterCloud(user){
     if (first){ first = false; closeModal(true); render(); } else scheduleRender();
   }, e => { console.error(e); toast('⚠️ Error de sincronización: ' + e.message); });
 }
-const mainOf = p => ({name:p.name, color:p.color, categories:p.categories, cards:p.cards});
+const mainOf = p => ({name:p.name, color:p.color, categories:p.categories, columns:p.columns, cards:p.cards});
 function scheduleSync(){ clearTimeout(syncTimer); syncTimer = setTimeout(flushSync, 500); }
 function flushSync(){
   clearTimeout(syncTimer); syncTimer = null;
@@ -1134,7 +1253,7 @@ function cloudImport(data, fname){
     mount: draw,
     actions:{ pick(el){ sel = el.dataset.id; draw($('.sheet')); }, cancel(){ closeModal(); },
       ok(){ const np = normalizeProfile(data.profiles[sel], ME);
-        Object.assign(P(ME), {color:np.color, categories:np.categories, weeks:np.weeks, cards:np.cards});
+        Object.assign(P(ME), {color:np.color, categories:np.categories, columns:np.columns, weeks:np.weeks, cards:np.cards});
         save(ME); closeModal(); render(); toast('Datos cargados en tu espacio'); } }
   });
 }
